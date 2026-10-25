@@ -49,3 +49,16 @@ test: test-contracts
 test-contracts: $(BUILD_DIR)/contract-test $(BUILD_DIR)/echo-plan-test
 	$(BUILD_DIR)/contract-test
 	$(BUILD_DIR)/echo-plan-test
+
+$(BUILD_DIR)/player-test: tests/player-test.c src/chip-audio.c $(HEADERS) Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $< $(LDLIBS) -o $@
+.PHONY: test-player
+test: test-player
+test-player: $(BUILD_DIR)/player-test
+	$(BUILD_DIR)/player-test
+
+$(BUILD_DIR)/player-benchmark: tests/player-benchmark.c tests/player-test.c src/chip-audio.c $(HEADERS) Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $< $(LDLIBS) -o $@
+.PHONY: benchmark-player
+benchmark-player: $(BUILD_DIR)/player-benchmark
+	$(BUILD_DIR)/player-benchmark

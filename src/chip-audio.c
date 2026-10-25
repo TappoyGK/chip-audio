@@ -854,3 +854,114 @@ void chip_audio_render(ChipAudio *a, int16_t *output, size_t frames, unsigned ma
         frames -= (size_t)chunk;
     }
 }
+
+// Each owned audio is in exactly one slot; retired slots still consume capacity.
+typedef enum { PLAYER_EMPTY, PLAYER_CURRENT, PLAYER_FADING, PLAYER_RETIRED } PlayerSlotState;
+typedef struct {
+    ChipAudio *audio;
+    PlayerSlotState state;
+    int total, remaining;
+} PlayerSlot;
+struct ChipAudioPlayer {
+    size_t capacity;
+    int current;
+    int16_t scratch[RENDER_BLOCK];
+    double mixed[RENDER_BLOCK];
+    PlayerSlot slots[];
+};
+ChipAudioPlayer *chip_audio_player_create(size_t slots, ChipAudioError *error) {
+    if (error) *error = CHIP_AUDIO_INVALID;
+    if (slots < CHIP_AUDIO_PLAYER_MIN_SLOTS || slots > CHIP_AUDIO_PLAYER_MAX_SLOTS)
+        return NULL;
+    ChipAudioPlayer *p = calloc(1, sizeof(*p) + slots * sizeof(PlayerSlot));
+    if (!p) { if (error) *error = CHIP_AUDIO_MEMORY; return NULL; }
+    p->capacity = slots;
+    p->current = -1;
+    if (error) *error = CHIP_AUDIO_OK;
+    return p;
+}
+void chip_audio_player_destroy(ChipAudioPlayer *p) {
+    if (!p) return;
+    for (size_t i = 0; i < p->capacity; i++) chip_audio_destroy(p->slots[i].audio);
+    free(p);
+}
+ChipAudioError chip_audio_player_stop(ChipAudioPlayer *p, int fade_samples) {
+    if (!p || fade_samples < 0 || fade_samples > CHIP_AUDIO_PLAYER_MAX_FADE)
+        return CHIP_AUDIO_INVALID;
+    if (p->current >= 0) {
+        PlayerSlot *slot = &p->slots[p->current];
+        slot->total = slot->remaining = fade_samples;
+        slot->state = fade_samples ? PLAYER_FADING : PLAYER_RETIRED;
+        p->current = -1;
+    }
+    return CHIP_AUDIO_OK;
+}
+ChipAudioError chip_audio_player_switch(ChipAudioPlayer *p, ChipAudio *next, int fade_samples) {
+    if (!p || !next || fade_samples < 0 || fade_samples > CHIP_AUDIO_PLAYER_MAX_FADE ||
+        next->position != 0 || next->stopped || chip_audio_finished(next))
+        return CHIP_AUDIO_INVALID;
+    int empty = -1;
+    for (size_t i = 0; i < p->capacity; i++) {
+        if (p->slots[i].audio == next) return CHIP_AUDIO_INVALID;
+        if (empty < 0 && p->slots[i].state == PLAYER_EMPTY) empty = (int)i;
+    }
+    if (empty < 0) return CHIP_AUDIO_BUSY;
+    chip_audio_player_stop(p, fade_samples);
+    p->slots[empty] = (PlayerSlot){next, PLAYER_CURRENT, 0, 0};
+    p->current = empty;
+    return CHIP_AUDIO_OK;
+}
+int chip_audio_player_finished(const ChipAudioPlayer *p) {
+    if (!p) return 1;
+    for (size_t i = 0; i < p->capacity; i++)
+        if (p->slots[i].state == PLAYER_CURRENT || p->slots[i].state == PLAYER_FADING)
+            return 0;
+    return 1;
+}
+ChipAudio *chip_audio_player_collect(ChipAudioPlayer *p) {
+    if (!p) return NULL;
+    for (size_t i = 0; i < p->capacity; i++) if (p->slots[i].state == PLAYER_RETIRED) {
+        ChipAudio *audio = p->slots[i].audio;
+        p->slots[i] = (PlayerSlot){0};
+        return audio;
+    }
+    return NULL;
+}
+void chip_audio_player_clear(ChipAudioPlayer *p) {
+    if (!p) return;
+    for (size_t i = 0; i < p->capacity; i++)
+        if (p->slots[i].state != PLAYER_EMPTY) p->slots[i].state = PLAYER_RETIRED;
+    p->current = -1;
+}
+void chip_audio_player_render(ChipAudioPlayer *p, int16_t *output, size_t frames, unsigned mask) {
+    if (!output) return;
+    while (frames) {
+        size_t chunk = frames < RENDER_BLOCK ? frames : RENDER_BLOCK;
+        if (!p) memset(output, 0, chunk * sizeof(*output));
+        else {
+            memset(p->mixed, 0, chunk * sizeof(*p->mixed));
+            for (size_t i = 0; i < p->capacity; i++) {
+                PlayerSlot *slot = &p->slots[i];
+                if (slot->state != PLAYER_CURRENT && slot->state != PLAYER_FADING) continue;
+                int fading = slot->state == PLAYER_FADING;
+                size_t take = fading && (size_t)slot->remaining < chunk ? (size_t)slot->remaining : chunk;
+                chip_audio_render(slot->audio, p->scratch, take, mask);
+                for (size_t k = 0; k < take; k++) {
+                    double gain = fading ? (double)(slot->remaining - (int)k) / slot->total : 1.0;
+                    p->mixed[k] += p->scratch[k] * gain;
+                }
+                if (fading) slot->remaining -= (int)take;
+                if ((fading && !slot->remaining) || chip_audio_finished(slot->audio)) {
+                    slot->state = PLAYER_RETIRED;
+                    if (p->current == (int)i) p->current = -1;
+                }
+            }
+            for (size_t k = 0; k < chunk; k++) {
+                double value = p->mixed[k];
+                output[k] = value > 32767 ? 32767 : value < -32768 ? -32768 : (int16_t)value;
+            }
+        }
+        output += chunk;
+        frames -= chunk;
+    }
+}

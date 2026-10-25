@@ -22,7 +22,7 @@ typedef struct {
     const ChipAudioNote *notes;
     size_t count;
 } ChipAudioTrack;
-typedef enum { CHIP_AUDIO_OK = 0, CHIP_AUDIO_INVALID, CHIP_AUDIO_MEMORY } ChipAudioError;
+typedef enum { CHIP_AUDIO_OK = 0, CHIP_AUDIO_INVALID, CHIP_AUDIO_MEMORY, CHIP_AUDIO_BUSY } ChipAudioError;
 typedef struct ChipAudio ChipAudio;
 // Copies input. No public note-count limit. Creation and setup functions may allocate.
 // Every channel accepts any ChipWave. Pitch 0..127, volume 1..15, length > 0.
@@ -102,6 +102,41 @@ void chip_audio_stop(ChipAudio *audio);
 void chip_audio_render(ChipAudio *audio, int16_t *output, size_t frames, unsigned mask);
 int64_t chip_audio_position(const ChipAudio *audio);
 int chip_audio_finished(const ChipAudio *audio);
+// Bounded whole-sound transition player. Not a score transport or note envelope.
+#define CHIP_AUDIO_PLAYER_DEFAULT_SLOTS 5
+#define CHIP_AUDIO_PLAYER_MIN_SLOTS 2
+#define CHIP_AUDIO_PLAYER_MAX_SLOTS 17
+#define CHIP_AUDIO_PLAYER_DEFAULT_FADE 128
+#define CHIP_AUDIO_PLAYER_MAX_FADE CHIP_AUDIO_SAMPLE_RATE
+typedef struct ChipAudioPlayer ChipAudioPlayer;
+// Create/destroy outside the audio callback. All other operations below are
+// allocation-free and run on ONE owning thread, never concurrently.
+ChipAudioPlayer *chip_audio_player_create(size_t slots, ChipAudioError *error);
+void chip_audio_player_destroy(ChipAudioPlayer *player);
+// Success transfers ownership. Failure leaves both player and next unchanged.
+// next must be non-NULL, at position zero, not stopped/finished or already owned
+// (including retired slots). Fade is 0..44100 samples. Full capacity returns BUSY,
+// even for fade=0; retired sounds consume slots until collected.
+ChipAudioError chip_audio_player_switch(ChipAudioPlayer *player, ChipAudio *next,
+                                       int fade_samples);
+// No new slot required. Only the current sound starts fading. Older fades retain
+// their gain and deadline; repeating stop without a current sound is a no-op.
+ChipAudioError chip_audio_player_stop(ChipAudioPlayer *player, int fade_samples);
+// For each old sound: gain(k)=(N-k)/N, k=0..N-1. New sound starts immediately,
+// with no added fade-in. Sum existing int16 source PCM in double precision,
+// saturate once at the player output, then truncate toward zero to int16.
+// Inner source clipping cannot be undone. Mask applies to all sources; mute
+// still advances their clocks/fades. Zero frames changes nothing. NULL player
+// zero-fills; NULL output is a no-op. Process in fixed-size internal chunks.
+void chip_audio_player_render(ChipAudioPlayer *player, int16_t *output,
+                              size_t frames, unsigned mask);
+// True when no current/fading sounds remain; retired allocations do not count.
+int chip_audio_player_finished(const ChipAudioPlayer *player);
+// Return one retired sound (or NULL), freeing its slot and transferring ownership
+// back. Hand off to another thread before destroying it from an audio callback.
+ChipAudio *chip_audio_player_collect(ChipAudioPlayer *player);
+// Immediate silence: all owned sounds become retired, not destroyed.
+void chip_audio_player_clear(ChipAudioPlayer *player);
 #ifdef __cplusplus
 }
 #endif
