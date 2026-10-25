@@ -58,6 +58,8 @@ typedef struct SeekState {
     EchoSample *ring[2];
 } SeekState;
 struct ChipAudio {
+    // Object ownership survives reset and score/timbre exchanges.
+    ChipAudioPlayer *owner;
     EchoState echo;
     SeekState **seeks, *seed, *retired_seeks;
     size_t seek_count;
@@ -898,7 +900,7 @@ ChipAudioError chip_audio_player_stop(ChipAudioPlayer *p, int fade_samples) {
 }
 ChipAudioError chip_audio_player_switch(ChipAudioPlayer *p, ChipAudio *next, int fade_samples) {
     if (!p || !next || fade_samples < 0 || fade_samples > CHIP_AUDIO_PLAYER_MAX_FADE ||
-        next->position != 0 || next->stopped || chip_audio_finished(next))
+        next->owner || next->position != 0 || next->stopped || chip_audio_finished(next))
         return CHIP_AUDIO_INVALID;
     int empty = -1;
     for (size_t i = 0; i < p->capacity; i++) {
@@ -907,6 +909,7 @@ ChipAudioError chip_audio_player_switch(ChipAudioPlayer *p, ChipAudio *next, int
     }
     if (empty < 0) return CHIP_AUDIO_BUSY;
     chip_audio_player_stop(p, fade_samples);
+    next->owner = p;
     p->slots[empty] = (PlayerSlot){next, PLAYER_CURRENT, 0, 0};
     p->current = empty;
     return CHIP_AUDIO_OK;
@@ -922,6 +925,7 @@ ChipAudio *chip_audio_player_collect(ChipAudioPlayer *p) {
     if (!p) return NULL;
     for (size_t i = 0; i < p->capacity; i++) if (p->slots[i].state == PLAYER_RETIRED) {
         ChipAudio *audio = p->slots[i].audio;
+        audio->owner = NULL;
         p->slots[i] = (PlayerSlot){0};
         return audio;
     }

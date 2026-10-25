@@ -115,7 +115,7 @@ ChipAudioPlayer *chip_audio_player_create(size_t slots, ChipAudioError *error);
 void chip_audio_player_destroy(ChipAudioPlayer *player);
 // Success transfers ownership. Failure leaves both player and next unchanged.
 // next must be non-NULL, at position zero, not stopped/finished or already owned
-// (including retired slots). Fade is 0..44100 samples. Full capacity returns BUSY,
+// by ANY player (including retired slots). Fade is 0..44100 samples. Full capacity returns BUSY,
 // even for fade=0; retired sounds consume slots until collected.
 ChipAudioError chip_audio_player_switch(ChipAudioPlayer *player, ChipAudio *next,
                                        int fade_samples);

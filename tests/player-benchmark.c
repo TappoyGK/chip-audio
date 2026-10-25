@@ -1,8 +1,23 @@
+#define _POSIX_C_SOURCE 200809L
 #define main player_contract_main
 #include "player-test.c"
 #undef main
+#ifdef _WIN32
+#include <windows.h>
+static double now(void) {
+    LARGE_INTEGER ticks, frequency;
+    assert(QueryPerformanceCounter(&ticks));
+    assert(QueryPerformanceFrequency(&frequency));
+    return (double)ticks.QuadPart / frequency.QuadPart;
+}
+#else
 #include <time.h>
-static double now(void){struct timespec t;timespec_get(&t,TIME_UTC);return t.tv_sec+t.tv_nsec/1e9;}
+static double now(void) {
+    struct timespec t;
+    assert(clock_gettime(CLOCK_MONOTONIC, &t) == 0);
+    return t.tv_sec + t.tv_nsec / 1e9;
+}
+#endif
 int main(void){
     const int voices[]={1,2,17};
     for(int scenario=0;scenario<3;scenario++){

@@ -44,6 +44,7 @@ if(CHIP_AUDIO_BUILD_TESTS)
     chip_test(chip-audio-contract-test tests/contract-test.c)
     chip_test(chip-audio-echo-plan-test tests/echo-plan-test.c)
     chip_test(chip-audio-player-test tests/player-test.c)
+    chip_test(chip-audio-player-ownership-test tests/player-ownership-test.c)
     # Compare independent expressions with identical floating-point rounding.
     if(MSVC)
         target_compile_options(chip-audio-waveform-test PRIVATE /fp:strict)
