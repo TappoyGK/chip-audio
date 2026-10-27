@@ -5,9 +5,9 @@ CPPFLAGS += -Iinclude
 CFLAGS ?= -O2
 CFLAGS += -std=c11 -Wall -Wextra -Wno-unused-function
 LDLIBS += -lm
-SOURCES := src/chip-audio.c src/chip-drums.c
+SOURCES := src/chip-audio.c src/chip-drums.c src/chip-mixer.c
 HEADERS := $(wildcard include/*.h src/*.h)
-OBJECTS := $(BUILD_DIR)/chip-audio.o $(BUILD_DIR)/chip-drums.o
+OBJECTS := $(BUILD_DIR)/chip-audio.o $(BUILD_DIR)/chip-drums.o $(BUILD_DIR)/chip-mixer.o
 
 .PHONY: all test clean
 all: $(BUILD_DIR)/libchip-audio.a
@@ -74,3 +74,10 @@ $(BUILD_DIR)/stems-test: tests/stems-test.c tests/player-test.c src/chip-audio.c
 test: test-stems
 test-stems: $(BUILD_DIR)/stems-test
 	$(BUILD_DIR)/stems-test
+
+$(BUILD_DIR)/mixer-test: tests/mixer-test.c $(BUILD_DIR)/libchip-audio.a $(HEADERS) Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $< $(BUILD_DIR)/libchip-audio.a $(LDLIBS) -o $@
+.PHONY: test-mixer
+test: test-mixer
+test-mixer: $(BUILD_DIR)/mixer-test
+	$(BUILD_DIR)/mixer-test

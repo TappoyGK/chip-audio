@@ -79,6 +79,12 @@ typedef struct {
     double gain;
 } ChipEchoTap;
 int chip_audio_set_echo_taps(ChipAudio *audio, const ChipEchoTap *taps, size_t count);
+// Non-RT configuration snapshot. Source must be unowned, at zero and not stopped.
+// Prepared seek caches and live phase are not copied. SIZE_MAX means invalid.
+// Reported bytes include all retained allocations, not allocator metadata.
+size_t chip_audio_clone_size(const ChipAudio *audio);
+ChipAudio *chip_audio_clone(const ChipAudio *audio, size_t max_bytes, ChipAudioError *error);
+int64_t chip_audio_length(const ChipAudio *audio);
 void chip_audio_destroy(ChipAudio *audio);
 // Resets phase and noise state as well as the cursor. Ready for deterministic looping.
 void chip_audio_reset(ChipAudio *audio);

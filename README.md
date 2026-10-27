@@ -318,3 +318,21 @@ These are the first mixer building blocks. Scheduled source attachment,
 SE suppression bindings, pause/resume, and the sequencer are not implemented
 by these primitives. The old `ChipAudioPlayer` still uses its documented int16
 source boundary; it is not silently converted into the future wide mixer.
+
+## Scheduled wide mixer (0.7.0)
+
+`chip-mixer.h` exposes the bounded `CAMixer`, absolute-sample scheduling, BGM/SE/UI
+routes, track/group/master gain, pause/resume, wide before/after-gain stems and
+pre-registered gain gates. `chip-source.h` is the generic source adapter: no
+sequencer types or application dependency enter this library. Allocation and
+preparation happen outside render; the owner thread collects retirement tokens
+for disposal elsewhere. Every operation reserves its result and retirement space
+before acceptance. Pending sources occupy capacity immediately.
+
+Use `ca_se_prepare` to snapshot a configured zero-position `ChipAudio`, then
+instantiate independent sources. Destroying the original audio or definition
+does not invalidate instances. Only successful attach/replace takes ownership.
+All five stems are combined as double PCM units, then clipped once at final output.
+Gates take the minimum active attenuation and preserve their exact source-end
+boundary; gain automation continues along output time while sources are paused.
+The old `ChipAudioPlayer` remains a separate API, not a mixer input path.

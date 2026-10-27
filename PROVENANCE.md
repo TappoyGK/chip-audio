@@ -23,3 +23,7 @@ is not a claim about unseen upstream materials. The owner's implementation
 specification explicitly authorizes MIT licensing of this library's code and
 associated documentation. The standard MIT text is in `LICENSE` and is installed
 with the library.
+
+The scheduled mixer, generic source adapter, prepared SE snapshots and their
+contract tests are original implementation additions; they introduce no new
+third-party source or media dependencies.

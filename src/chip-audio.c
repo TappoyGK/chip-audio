@@ -1020,3 +1020,56 @@ void chip_audio_mix_add(double *mix, const double *input, const double *gain, si
 void chip_audio_mix_pcm(const double *mix, int16_t *output, size_t frames) {
     for (size_t i = 0; i < frames; i++) output[i] = synth_pcm(mix[i]);
 }
+
+// Immutable-definition snapshots copy configuration, never live phase/seek caches.
+static int clone_size_add(size_t *size,size_t count,size_t element) {
+    if(count>SIZE_MAX/element||*size>SIZE_MAX-count*element)return 0;
+    *size+=count*element;return 1;
+}
+size_t chip_audio_clone_size(const ChipAudio *a) {
+    if(!a||a->owner||a->position||a->stopped)return SIZE_MAX;
+    size_t n=sizeof(*a);
+    for(int p=0;p<4;p++)if(!clone_size_add(&n,a->channels[p].count,sizeof(Segment)))return SIZE_MAX;
+    for(int p=0;p<2;p++)if(!clone_size_add(&n,a->pulse[p].count,sizeof(ChipPulseChange))||
+        !clone_size_add(&n,a->pulse[p].onset_count,sizeof(ChipPulseOnset))||
+        !clone_size_add(&n,a->echo.capacity[p],sizeof(EchoSample)))return SIZE_MAX;
+    if(!clone_size_add(&n,a->kick_count,sizeof(ChipDPCMHit))||
+       !clone_size_add(&n,a->echo.count,sizeof(ChipEchoTap))||!clone_size_add(&n,a->echo.count,1)||
+       !clone_size_add(&n,a->echo.arrival_count,sizeof(EchoArrival)))return SIZE_MAX;
+    return n;
+}
+static void *clone_array(const void *source,size_t count,size_t element) {
+    if(!count)return NULL;void *p=malloc(count*element);if(p)memcpy(p,source,count*element);return p;
+}
+ChipAudio *chip_audio_clone(const ChipAudio *a,size_t max_bytes,ChipAudioError *error) {
+    if(error)*error=CHIP_AUDIO_INVALID;size_t bytes=chip_audio_clone_size(a);
+    if(bytes==SIZE_MAX)return NULL;
+    if(error)*error=CHIP_AUDIO_MEMORY;if(bytes>max_bytes)return NULL;
+    ChipAudio *b=calloc(1,sizeof(*b));if(!b)return NULL;
+    b->length=a->length;b->kick_attack=a->kick_attack;b->kick_decay=a->kick_decay;b->kick_gain=a->kick_gain;
+    memcpy(b->kick_levels,a->kick_levels,sizeof(b->kick_levels));
+    for(int p=0;p<4;p++){
+        b->channels[p].sound=a->channels[p].sound;b->channels[p].count=a->channels[p].count;
+        b->channels[p].segments=clone_array(a->channels[p].segments,a->channels[p].count,sizeof(Segment));
+        if(a->channels[p].count&&!b->channels[p].segments)goto failure;
+    }
+    for(int p=0;p<2;p++){
+        b->pulse[p].count=a->pulse[p].count;b->pulse[p].onset_count=a->pulse[p].onset_count;
+        b->pulse[p].changes=clone_array(a->pulse[p].changes,a->pulse[p].count,sizeof(ChipPulseChange));
+        b->pulse[p].onsets=clone_array(a->pulse[p].onsets,a->pulse[p].onset_count,sizeof(ChipPulseOnset));
+        b->echo.capacity[p]=a->echo.capacity[p];
+        b->echo.ring[p]=b->echo.capacity[p]?calloc(b->echo.capacity[p],sizeof(EchoSample)):NULL;
+        if((a->pulse[p].count&&!b->pulse[p].changes)||(a->pulse[p].onset_count&&!b->pulse[p].onsets)||
+            (a->echo.capacity[p]&&!b->echo.ring[p]))goto failure;
+    }
+    b->kick_count=a->kick_count;b->kicks=clone_array(a->kicks,a->kick_count,sizeof(ChipDPCMHit));
+    b->echo.count=a->echo.count;b->echo.arrival_count=a->echo.arrival_count;
+    b->echo.taps=clone_array(a->echo.taps,a->echo.count,sizeof(ChipEchoTap));
+    b->echo.fades=clone_array(a->echo.fades,a->echo.count,1);
+    b->echo.arrivals=clone_array(a->echo.arrivals,a->echo.arrival_count,sizeof(EchoArrival));
+    if((a->kick_count&&!b->kicks)||(a->echo.count&&(!b->echo.taps||!b->echo.fades))||
+        (a->echo.arrival_count&&!b->echo.arrivals))goto failure;
+    chip_audio_reset(b);if(error)*error=CHIP_AUDIO_OK;return b;
+failure:chip_audio_destroy(b);return NULL;
+}
+int64_t chip_audio_length(const ChipAudio *a){return a?a->length:0;}
