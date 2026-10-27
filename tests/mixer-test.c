@@ -59,6 +59,26 @@ int main(void){
     run(m,actual,900,735);for(int i=0;i<137;i++)assert(actual[i]==0);
     int nonzero=0;for(int i=137;i<900;i++)if(actual[i]!=0)nonzero++;assert(nonzero);
     ca_mixer_destroy(m);
+    l=limits();
+    // Replacement keeps the old tail and exposes exactly the post-gain sum.
+    m=ca_mixer_create(&l,NULL);CAHandle old,next;
+    assert(ca_source_attach(m,source(1000,0,1000),(CARoute){CA_BGM,0},0,&old)==CA_OK);
+    assert(ca_source_replace(m,old,source(1000,0,2000),(CARoute){CA_BGM,0},4,100,&next)==CA_OK);
+    double old_after[110],next_after[110];CAStem stems[2]={{.after_gain=old_after,.instance=old,.source=0},{.after_gain=next_after,.instance=next,.source=0}};
+    CAOutput mix={.mix=actual,.stems=stems,.stem_count=2};assert(ca_mixer_render(m,110,&mix)==CA_OK);
+    for(int i=0;i<110;i++)assert(actual[i]==old_after[i]+next_after[i]);
+    assert(actual[99]==1000&&actual[100]==3000&&actual[101]==2750&&actual[104]==2000);
+    s=source(1000,0,1);assert(ca_source_replace(m,next,s,(CARoute){CA_BGM,0},4,110,&h)==CA_BUSY);ca_source_destroy(s);
+    CARetired *tail=ca_collect(m);assert(tail);ca_dispose(tail);assert(ca_state(m,old,&state)==CA_STALE_HANDLE);
+    assert(ca_source_replace(m,next,source(1000,0,1),(CARoute){CA_BGM,0},4,110,&h)==CA_OK);ca_mixer_destroy(m);
+    // Overlapping gates recover only after the final request ends. Ending the
+    // weaker request must not restart the stronger request's envelope.
+    m=ca_mixer_create(&l,NULL);CAHandle se1,se2,binding;
+    assert(ca_source_attach(m,source(1000,0,1000),(CARoute){CA_BGM,0},0,&h)==CA_OK);
+    assert(ca_source_attach(m,source(137,0,0),(CARoute){CA_SE,0},0,&se1)==CA_OK);
+    assert(ca_source_attach(m,source(200,0,0),(CARoute){CA_SE,0},0,&se2)==CA_OK);
+    CAGainBinding one={se1,h,0,.5,1},two={se2,h,0,.25,1};assert(ca_bind_gain(m,&one,0,&binding)==CA_OK);assert(ca_bind_gain(m,&two,0,&binding)==CA_OK);
+    run(m,actual,400,127);assert(actual[137]==250&&actual[200]==250&&actual[201]==250+750./128&&actual[328]==1000);ca_mixer_destroy(m);
     // Gain automation follows output time while a paused source clock is frozen.
     m=ca_mixer_create(&l,NULL);assert(ca_source_attach(m,source(1000,0,1000),(CARoute){CA_BGM,0},0,&h)==CA_OK);
     assert(ca_source_pause(m,h,0,10)==CA_OK);assert(ca_gain(m,(CAGainTarget){.scope=CA_TRACK_GAIN,.instance=h,.source=0},0,4,10)==CA_OK);
