@@ -482,7 +482,7 @@ failure:
     clear_echo(&e);
     return 0;
 }
-static void render_echo(ChipAudio *a, int32_t *output, int count, unsigned mask) {
+static void render_echo(ChipAudio *a, int32_t *output, int count, unsigned mask, double *planes[5]) {
     int16_t stems[4][RENDER_BLOCK];
     int16_t *channels[4] = {stems[0], stems[1], stems[2], stems[3]};
     synth_render_wide(a->voices, NULL, count, 15, channels, NULL);
@@ -537,6 +537,8 @@ static void render_echo(ChipAudio *a, int32_t *output, int count, unsigned mask)
             if (mask & (1u << p))
                 mixed += values[p];
         output[i] = mixed;
+        if (planes) for (int p = 0; p < 4; p++)
+            if (planes[p]) planes[p][i] = values[p];
     }
 }
 void chip_audio_destroy(ChipAudio *a) {
@@ -827,34 +829,51 @@ static int prepare_channel_interval(ChipAudio *a, int p, int chunk) {
 
     return chunk;
 }
-void chip_audio_render(ChipAudio *a, int16_t *output, size_t frames, unsigned mask) {
-    if (!output)
-        return;
+// One state advance serves both the legacy PCM boundary and the five-plane API.
+static void render_outputs(ChipAudio *a, int16_t *output, double *planes[5],
+                           size_t frames, unsigned mask) {
+    size_t offset = 0;
     while (frames) {
-        if (!a || a->stopped || a->position >= a->length) {
-            for (size_t i = 0; i < frames; i++)
-                output[i] = 0;
-            return;
-        }
         int chunk = frames > RENDER_BLOCK ? RENDER_BLOCK : (int)frames;
-        int32_t mixed[RENDER_BLOCK];
-        for (int p = 0; p < 2; p++) {
-            chunk = apply_pulse_automation(a, p, chunk);
+        double *current[5] = {0};
+        if (planes) for (int p = 0; p < 5; p++)
+            if (planes[p]) current[p] = planes[p] + offset;
+        if (!a || a->stopped || a->position >= a->length) {
+            if (output) memset(output + offset, 0, (size_t)chunk * sizeof(*output));
+            for (int p = 0; p < 5; p++)
+                if (current[p]) memset(current[p], 0, (size_t)chunk * sizeof(double));
+        } else {
+            int32_t mixed[RENDER_BLOCK], kicks[RENDER_BLOCK] = {0};
+            for (int p = 0; p < 2; p++) chunk = apply_pulse_automation(a, p, chunk);
+            for (int p = 0; p < 4; p++) chunk = prepare_channel_interval(a, p, chunk);
+            if (a->echo.count)
+                render_echo(a, mixed, chunk, mask & 15u, planes ? current : NULL);
+            else if (planes) {
+                int16_t stems[4][RENDER_BLOCK];
+                int16_t *channels[4] = {stems[0], stems[1], stems[2], stems[3]};
+                synth_render_wide(a->voices, NULL, chunk, 15, channels, mixed);
+                for (int p = 0; p < 4; p++) if (current[p])
+                    for (int i = 0; i < chunk; i++) current[p][i] = stems[p][i];
+            } else
+                synth_render_wide(a->voices, NULL, chunk, mask & 15u, NULL, mixed);
+            mix_kicks(a, kicks, chunk, mask);
+            for (int i = 0; i < chunk; i++) {
+                if (current[4]) current[4][i] = kicks[i];
+                if (output) output[offset + (size_t)i] = synth_pcm(mixed[i] + kicks[i]);
+            }
+            a->position += chunk;
         }
-        for (int p = 0; p < 4; p++) {
-            chunk = prepare_channel_interval(a, p, chunk);
-        }
-        if (a->echo.count)
-            render_echo(a, mixed, chunk, mask & 15u);
-        else
-            synth_render_wide(a->voices, NULL, chunk, mask & 15u, NULL, mixed);
-        mix_kicks(a, mixed, chunk, mask);
-        for (int i = 0; i < chunk; i++)
-            output[i] = synth_pcm(mixed[i]);
-        a->position += chunk;
-        output += chunk;
+        offset += (size_t)chunk;
         frames -= (size_t)chunk;
     }
+}
+void chip_audio_render(ChipAudio *a, int16_t *output, size_t frames, unsigned mask) {
+    if (output) render_outputs(a, output, NULL, frames, mask);
+}
+void chip_audio_render_stems(ChipAudio *a, double *planes[5], size_t frames) {
+    // Non-NULL array selects the stems path even if every plane is discarded.
+    double *discard[5] = {0};
+    render_outputs(a, NULL, planes ? planes : discard, frames, 15);
 }
 
 // Each owned audio is in exactly one slot; retired slots still consume capacity.
@@ -968,4 +987,36 @@ void chip_audio_player_render(ChipAudioPlayer *p, int16_t *output, size_t frames
         output += chunk;
         frames -= chunk;
     }
+}
+
+int chip_audio_gain_init(ChipAudioGain *g, double value) {
+    if (!g || !isfinite(value) || value < 0 || value > 2) return 0;
+    *g = (ChipAudioGain){value, value, value, 0, 0};
+    return 1;
+}
+int chip_audio_gain_set(ChipAudioGain *g, double target, int samples) {
+    if (!g || !isfinite(target) || target < 0 || target > 2 || samples < 0 ||
+        samples > CHIP_AUDIO_SAMPLE_RATE) return 0;
+    g->start = g->current;
+    g->target = target;
+    g->total = samples;
+    g->elapsed = 0;
+    if (!samples) g->current = target;
+    return 1;
+}
+void chip_audio_gain_render(ChipAudioGain *g, double *output, size_t frames) {
+    for (size_t i = 0; i < frames; i++) {
+        if (output) output[i] = g->current;
+        if (g->elapsed < g->total) {
+            g->elapsed++;
+            g->current = g->elapsed == g->total ? g->target :
+                g->start + (g->target - g->start) * ((double)g->elapsed / g->total);
+        }
+    }
+}
+void chip_audio_mix_add(double *mix, const double *input, const double *gain, size_t frames) {
+    for (size_t i = 0; i < frames; i++) mix[i] += input[i] * (gain ? gain[i] : 1.0);
+}
+void chip_audio_mix_pcm(const double *mix, int16_t *output, size_t frames) {
+    for (size_t i = 0; i < frames; i++) output[i] = synth_pcm(mix[i]);
 }

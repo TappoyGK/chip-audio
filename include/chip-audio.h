@@ -100,6 +100,34 @@ void chip_audio_stop(ChipAudio *audio);
 // Zero-fills after the end. No allocation, locks or OS/device calls during rendering.
 // One owning thread: do not call reset/stop/destroy concurrently with render.
 void chip_audio_render(ChipAudio *audio, int16_t *output, size_t frames, unsigned mask);
+// Mixer primitives. Initialize before use; keep one owner per gain state.
+// current is the gain for the NEXT sample, so retargeting is continuous.
+typedef struct {
+    double start, target, current;
+    int total, elapsed;
+} ChipAudioGain;
+int chip_audio_gain_init(ChipAudioGain *gain, double value);
+// Finite target [0,2], duration 0..44100. Failure leaves state unchanged.
+int chip_audio_gain_set(ChipAudioGain *gain, double target, int samples);
+// NULL output advances/discards. Generate a shared group/master envelope ONCE,
+// then reuse its array for every source in that group (do not advance per source).
+void chip_audio_gain_render(ChipAudioGain *gain, double *output, size_t frames);
+// Caller initializes mix to zero once per block; add each input before PCM.
+// gain=NULL means unity. Buffers may be identical, but not partially overlap.
+// Inputs/gains and their product/sum must be finite; these are RT primitives,
+// not input-validation entry points. Frames=0 does not dereference buffers.
+void chip_audio_mix_add(double *mix, const double *input, const double *gain, size_t frames);
+void chip_audio_mix_pcm(const double *mix, int16_t *output, size_t frames);
+// Five unsaturated planes: synth voices 0..3 and independent DPCM voice 4.
+// Double PCM16 units, after intrinsic gain/effects, before external mixer gains.
+// Retains existing integer quantization (channel-order telescoping); summing all
+// planes and clipping matches unmasked legacy PCM. Individual planes are NOT
+// independently rendered/masked voices. Echo belongs to its destination plane.
+// Each non-NULL plane points to frames doubles; planes must not alias. NULL plane
+// (or NULL array) discards output, but ALL voices/history advance exactly once.
+// No allocation/free/locks/I/O. Zero frames is a no-op. End/stopped/NULL audio
+// zero-fill outputs; stopped/end audio does not advance. Apply mute AFTER render.
+void chip_audio_render_stems(ChipAudio *audio, double *planes[5], size_t frames);
 int64_t chip_audio_position(const ChipAudio *audio);
 int chip_audio_finished(const ChipAudio *audio);
 // Bounded whole-sound transition player. Not a score transport or note envelope.

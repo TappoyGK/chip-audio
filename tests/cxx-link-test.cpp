@@ -21,6 +21,14 @@ int main() {
     assert(chip_audio_player_finished(player));
     assert(chip_audio_player_collect(player)==audio);
     chip_audio_destroy(audio);chip_audio_player_destroy(player);
+    ChipAudioGain gain{};double envelope[4],mix[4]={},input[4]={40000,40000,40000,40000};
+    assert(chip_audio_gain_init(&gain,1));assert(chip_audio_gain_set(&gain,0,4));
+    chip_audio_gain_render(&gain,envelope,4);chip_audio_mix_add(mix,input,envelope,4);
+    chip_audio_mix_pcm(mix,pcm,4);assert(pcm[0]==32767&&pcm[3]==10000);
+    audio=chip_audio_create(tracks,4096,nullptr);assert(audio);
+    double voice[4];double *planes[5]={voice,nullptr,nullptr,nullptr,nullptr};
+    chip_audio_render_stems(audio,planes,4);assert(chip_audio_position(audio)==4);
+    chip_audio_destroy(audio);
     ChipAudioNote hits[CHIP_DRUM_MAX_SEGMENTS];
     assert(chip_drum_expand(CHIP_DRUM_SNARE,0,4096,10,hits,CHIP_DRUM_MAX_SEGMENTS)>0);
 }

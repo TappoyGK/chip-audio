@@ -67,3 +67,10 @@ $(BUILD_DIR)/player-ownership-test: tests/player-ownership-test.c $(BUILD_DIR)/l
 test-player: $(BUILD_DIR)/player-ownership-test
 	$(BUILD_DIR)/player-test
 	$(BUILD_DIR)/player-ownership-test
+
+$(BUILD_DIR)/stems-test: tests/stems-test.c tests/player-test.c src/chip-audio.c $(HEADERS) Makefile | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $< $(LDLIBS) -o $@
+.PHONY: test-stems
+test: test-stems
+test-stems: $(BUILD_DIR)/stems-test
+	$(BUILD_DIR)/stems-test
